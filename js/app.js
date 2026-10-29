@@ -142,7 +142,7 @@
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth || 640;
-    const cssH = 220;
+    const cssH = canvas.clientHeight || parseInt(canvas.getAttribute('height'), 10) || 170;
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     canvas.style.height = cssH + 'px';
@@ -406,6 +406,12 @@
       onGeolocate();
     }
   }
+
+  /* 供地图模块调用：切换左侧展示的城市 */
+  window.SkyBriefApp = {
+    setCity(target) { load(target); },
+    getState() { return state; }
+  };
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();

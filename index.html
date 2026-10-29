@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="SkyBrief 天气简报 —— 实时天气、3 天预报与 24 小时温度折线图">
+  <meta name="description" content="SkyBrief 天气简报 —— 实时天气、3 天预报、24 小时温度折线图与全国省份气温地图">
   <title>SkyBrief · 天气简报</title>
   <link rel="stylesheet" href="css/style.css">
 </head>
@@ -32,37 +32,54 @@
     </div>
   </header>
 
-  <main class="wrap">
-    <section class="hero card" id="hero">
-      <div class="hero-head">
-        <div class="hero-loc" id="heroLoc">正在获取位置…</div>
-        <div class="hero-badge" id="heroBadge">--</div>
-      </div>
-      <div class="hero-main">
-        <div class="hero-icon" id="heroIcon">⛅</div>
-        <div class="hero-temp">
-          <span id="heroTemp">--</span><sup class="unit">°C</sup>
+  <main class="layout">
+    <!-- 左栏：城市天气图框（已收窄） -->
+    <div class="col-left">
+      <section class="hero card" id="hero">
+        <div class="hero-head">
+          <div class="hero-loc" id="heroLoc">正在获取位置…</div>
+          <div class="hero-badge" id="heroBadge">--</div>
         </div>
-      </div>
-      <div class="hero-desc" id="heroDesc">加载中</div>
-      <div class="hero-stats" id="heroStats"></div>
-    </section>
+        <div class="hero-main">
+          <div class="hero-icon" id="heroIcon">⛅</div>
+          <div class="hero-temp">
+            <span id="heroTemp">--</span><sup class="unit">°C</sup>
+          </div>
+        </div>
+        <div class="hero-desc" id="heroDesc">加载中</div>
+        <div class="hero-stats" id="heroStats"></div>
+      </section>
 
-    <section class="card">
-      <div class="card-head">
-        <h2>24 小时趋势</h2>
-        <span class="card-hint" id="hourHint">温度 · 降水概率</span>
-      </div>
-      <canvas id="hourChart" class="chart" height="220"></canvas>
-      <div class="hour-strip" id="hourStrip"></div>
-    </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>24 小时趋势</h2>
+          <span class="card-hint" id="hourHint">温度 · 降水概率</span>
+        </div>
+        <canvas id="hourChart" class="chart" height="170"></canvas>
+        <div class="hour-strip" id="hourStrip"></div>
+      </section>
 
-    <section class="card">
+      <section class="card">
+        <div class="card-head">
+          <h2>未来 3 天</h2>
+          <span class="card-hint">最高 / 最低气温</span>
+        </div>
+        <div class="daily" id="dailyList"></div>
+      </section>
+    </div>
+
+    <!-- 右栏：中国地图 -->
+    <section class="map-card card">
       <div class="card-head">
-        <h2>未来 3 天</h2>
-        <span class="card-hint">最高 / 最低气温</span>
+        <h2>全国省份气温</h2>
+        <span class="card-hint" id="mapHint">悬停省份查看 24 小时趋势 · 点击切换城市</span>
       </div>
-      <div class="daily" id="dailyList"></div>
+      <div class="map-wrap" id="mapWrap">
+        <canvas id="chinaMap" class="china-map"></canvas>
+        <div class="map-tooltip" id="mapTooltip" role="tooltip"></div>
+        <div class="map-status" id="mapStatus">正在加载中国地图…</div>
+      </div>
+      <div class="map-legend" id="mapLegend"></div>
     </section>
   </main>
 
@@ -70,6 +87,8 @@
     <span id="metaProvider">数据源：--</span>
     <span class="dot">·</span>
     <span id="metaTime">更新时间：--</span>
+    <span class="dot">·</span>
+    <span id="mapMeta">地图数据源：Open-Meteo</span>
     <button id="reloadBtn" class="link-btn" type="button">刷新</button>
   </footer>
 
@@ -77,5 +96,6 @@
 
   <script src="js/weather.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/map.js"></script>
 </body>
 </html>
