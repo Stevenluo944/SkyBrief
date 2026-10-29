@@ -141,8 +141,8 @@
     const canvas = el('hourChart');
     if (!canvas) return;
     const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 640;
-    const cssH = canvas.clientHeight || parseInt(canvas.getAttribute('height'), 10) || 170;
+    const cssW = Math.max(200, Math.floor(canvas.clientWidth || 640));
+    const cssH = Math.max(120, Math.floor(canvas.clientHeight || parseInt(canvas.getAttribute('height'), 10) || 170));
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     canvas.style.height = cssH + 'px';
@@ -164,26 +164,30 @@
     let tmax = Math.max.apply(null, temps);
     if (tmax - tmin < 4) { const mid = (tmax + tmin) / 2; tmin = mid - 2; tmax = mid + 2; }
 
-    const padL = 30, padR = 16, padT = 30, padB = 40;
+    const padL = 30, padR = 26, padT = 30, padB = 40;
     const plotW = cssW - padL - padR;
     const plotH = cssH - padT - padB;
     const X = i => padL + (n <= 1 ? plotW / 2 : plotW * i / (n - 1));
     const Y = t => padT + plotH * (1 - (t - tmin) / (tmax - tmin));
 
-    // 网格 + 温度刻度
+    // 网格 + 温度刻度（刻度值去重，避免重复标签）
     ctx.strokeStyle = cssVar('--grid');
     ctx.lineWidth = 1;
     ctx.font = '10px sans-serif';
     ctx.textAlign = 'left';
     const rows = 4;
+    const drawnTicks = [];
     for (let r = 0; r <= rows; r++) {
       const yy = padT + plotH * r / rows;
       ctx.beginPath();
       ctx.moveTo(padL, yy);
       ctx.lineTo(cssW - padR, yy);
       ctx.stroke();
+      const tv = Math.round(tmax - (tmax - tmin) * r / rows);
+      if (drawnTicks.indexOf(tv) >= 0) continue;
+      drawnTicks.push(tv);
       ctx.fillStyle = cssVar('--text-mute');
-      ctx.fillText(Math.round(tmax - (tmax - tmin) * r / rows) + '°', 4, yy + 3);
+      ctx.fillText(tv + '°', 4, yy + 3);
     }
 
     // 降水概率柱
@@ -233,20 +237,23 @@
       ctx.stroke();
     });
 
-    // 温度标签
-    const step = n > 16 ? 4 : (n > 10 ? 3 : 2);
+    // 温度标签（按间隔标注，避免拥挤）
+    const tempStep = n > 16 ? 4 : (n > 10 ? 3 : 2);
     ctx.fillStyle = cssVar('--text-dim');
     ctx.font = '11px sans-serif';
     ctx.textAlign = 'center';
     hourly.forEach((h, i) => {
-      if (i % step === 0 || i === n - 1) ctx.fillText(h.temp + '°', X(i), Y(h.temp) - 9);
+      if (i % tempStep === 0 || i === n - 1) ctx.fillText(h.temp + '°', X(i), Y(h.temp) - 9);
     });
 
-    // 时间标签
+    // 时间标签（按可用宽度自适应密度，首尾必标，避免被裁切）
+    const timeStep = Math.max(2, Math.ceil(n / Math.max(3, Math.floor(plotW / 58))));
     ctx.fillStyle = cssVar('--text-mute');
     ctx.font = '10px sans-serif';
     hourly.forEach((h, i) => {
-      if (i === 0 || i % step === 0) ctx.fillText(h.time.slice(0, 2) + '时', X(i), cssH - 16);
+      if (i === 0 || i === n - 1 || i % timeStep === 0) {
+        ctx.fillText(h.time.slice(0, 2) + '时', X(i), cssH - 16);
+      }
     });
   }
 
@@ -391,6 +398,17 @@
       clearTimeout(rTimer);
       rTimer = setTimeout(() => { if (state.model) drawChart(state.model.hourly); }, 160);
     });
+
+    // 布局尺寸变化（例如左右分栏重排、地图加载完成后）时按新宽度重绘折线图
+    if (window.ResizeObserver) {
+      const chart = el('hourChart');
+      let roTimer = null;
+      const ro = new ResizeObserver(() => {
+        clearTimeout(roTimer);
+        roTimer = setTimeout(() => { if (state.model) drawChart(state.model.hourly); }, 80);
+      });
+      if (chart) ro.observe(chart);
+    }
   }
 
   /* ===================== 启动 ===================== */
