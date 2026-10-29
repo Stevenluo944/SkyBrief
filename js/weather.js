@@ -1,8 +1,12 @@
 /* SkyBrief 天气数据适配层
  * 统一内部数据模型 + 三个可切换数据源：
  *   1) open-meteo  免密钥、支持 CORS，默认方案，可直接跑通
- *   2) cnweather   中国天气网（需 Referer，须配合 CONFIG.cn_proxy 反向代理）
- *   3) weatherdt   气象数据平台官方插件（需引入插件脚本并配置 appid）
+ *   2) cnweather   中国天气网（需 Referer，须配合 CONFIG.proxy 反向代理）
+ *   3) weatherdt   气象数据平台官方接口（按官方文档逆向实现）：
+ *        GET http://api.weatherdt.com/common/?area=站号&type=数据大类&key=密钥
+ *        数据大类：observe(实况) / forecast(预报) / index(指数) / air(空气质量) / alarm(预警)
+ *        key 在用户中心【我的订单-接口详情】获取，通常绑定请求来源 IP/域名
+ *        api.weatherdt.com 不返回 CORS 头，浏览器直连会被拦截，须经 CONFIG.proxy
  */
 (function (global) {
   'use strict';
@@ -10,15 +14,15 @@
   /* ===================== 配置 ===================== */
   const CONFIG = {
     provider: 'open-meteo',
-    /* 中国天气网反向代理前缀（务必以 / 结尾），例如：
+    /* 反向代理前缀（务必以 / 结尾），例如：
      *   'http://localhost:8787/'
-     * 代理需转发到 http://www.weather.com.cn/ 并补上 Referer 头。 */
-    cn_proxy: '',
+     * 同时用于：中国天气网（补 Referer）与气象数据平台 api.weatherdt.com（补 CORS）。
+     * 代理由 tools/weather-proxy.mjs 提供，启动：node tools/weather-proxy.mjs */
+    proxy: '',
     /* 气象数据平台 weatherdt 配置 */
     weatherdt: {
-      appid: '',
-      token: '',
-      api: 'https://api.weatherdt.com'
+      key: '',
+      api: 'http://api.weatherdt.com'
     }
   };
 
@@ -65,6 +69,65 @@
     if (deg == null || isNaN(deg)) return '--';
     const i = Math.round(((deg % 360 + 360) % 360) / 45) % 8;
     return WIND_DIRS[i] + '风';
+  }
+
+  /* ===================== 气象数据平台 weatherdt 编码表 ===================== */
+  /* 天气现象编码 -> [中文名称, emoji]（来源：平台帮助文档「天气现象编码表」） */
+  const WDT_WEATHER = {
+    '0': ['晴', '☀️'], '1': ['多云', '⛅'], '2': ['阴', '☁️'],
+    '3': ['阵雨', '🌦️'], '4': ['雷阵雨', '⛈️'], '5': ['雷阵雨伴有冰雹', '⛈️'],
+    '6': ['雨夹雪', '🌨️'], '7': ['小雨', '🌦️'], '8': ['中雨', '🌧️'],
+    '9': ['大雨', '🌧️'], '10': ['暴雨', '🌧️'], '11': ['大暴雨', '🌧️'],
+    '12': ['特大暴雨', '⛈️'], '13': ['阵雪', '🌨️'], '14': ['小雪', '❄️'],
+    '15': ['中雪', '❄️'], '16': ['大雪', '❄️'], '17': ['暴雪', '❄️'],
+    '18': ['雾', '🌫️'], '19': ['冻雨', '🌧️'], '20': ['沙尘暴', '🌪️'],
+    '21': ['小到中雨', '🌦️'], '22': ['中到大雨', '🌧️'], '23': ['大到暴雨', '🌧️'],
+    '24': ['暴雨到大暴雨', '🌧️'], '25': ['大暴雨到特大暴雨', '🌧️'],
+    '26': ['小到中雪', '🌨️'], '27': ['中到大雪', '❄️'], '28': ['大到暴雪', '❄️'],
+    '29': ['浮尘', '🌫️'], '30': ['扬沙', '🌪️'], '31': ['强沙尘暴', '🌪️'],
+    '32': ['浓雾', '🌫️'], '49': ['强浓雾', '🌫️'], '53': ['霾', '🌫️'],
+    '54': ['中度霾', '🌫️'], '55': ['重度霾', '🌫️'], '56': ['严重霾', '🌫️'],
+    '57': ['大雾', '🌫️'], '58': ['特强浓雾', '🌫️'], '99': ['无', '❓'],
+    '301': ['雨', '🌧️'], '302': ['雪', '❄️']
+  };
+  function wdtWeather(code) {
+    const e = WDT_WEATHER[String(code)];
+    return e ? { desc: e[0], icon: e[1] } : { desc: '未知', icon: '❓' };
+  }
+
+  /* 风向编号表 */
+  const WDT_WIND_DIR = ['无持续风向', '东北风', '东风', '东南风', '南风', '西南风', '西风', '西北风', '北风', '旋转风'];
+  function wdtWindDir(code) {
+    return WDT_WIND_DIR[parseInt(code, 10)] || '--';
+  }
+
+  /* 风力编号表（级） */
+  const WDT_WIND_FORCE = ['微风', '3-4级', '4-5级', '5-6级', '6-7级', '7-8级', '8-9级', '9-10级', '10-11级', '11-12级'];
+  function wdtWindForce(code) {
+    const i = parseInt(code, 10);
+    return WDT_WIND_FORCE[i] || (isNaN(i) ? '--' : i + '级');
+  }
+
+  /* 接口错误编码表（来源：平台帮助文档） */
+  const WDT_ERROR = {
+    CC1000: '参数错误', CC1003: '订单已过期', CC1004: '访问次数超限', CC1005: '站点数过多',
+    CC1006: '访问接口路径错误', CC1100: '连接超时', CC1101: '密钥错误',
+    CC1102: '系统无响应', CC1105: '密钥未授权（可能未绑定当前来源 IP/域名）',
+    CC1200: '请求了无效站点', CC1201: '站点或要素过多', CC1300: '请求要素格式错误',
+    CC1301: '请求了未定制的数据类型', CC1302: '请求类型定制天数超出', CC1303: '多站点与指数要素过多'
+  };
+
+  /* 城市名 -> 统一站号（101010100 式），中国天气网与气象数据平台通用 */
+  function matchCnId(name) {
+    if (!name) return '';
+    if (CN_CITY[name]) return CN_CITY[name];
+    const norm = String(name).replace(/[市省县区]/g, '');
+    if (CN_CITY[norm]) return CN_CITY[norm];
+    for (const k of Object.keys(CN_CITY)) {
+      const kn = k.replace(/[市省县区]/g, '');
+      if (kn && (String(name).indexOf(kn) >= 0 || kn.indexOf(norm) >= 0)) return CN_CITY[k];
+    }
+    return '';
   }
 
   /* 中文天气词 -> emoji（中国天气网解析用） */
@@ -274,18 +337,17 @@
 
     resolveId(target) {
       if (target.cnId) return target.cnId;
-      if (target.name && CN_CITY[target.name]) return CN_CITY[target.name];
-      return '';
+      return matchCnId(target.name);
     },
 
     async fetch(target) {
-      if (!CONFIG.cn_proxy) {
-        throw new Error('中国天气网需配置反向代理（js/weather.js 中 CONFIG.cn_proxy）');
+      if (!CONFIG.proxy) {
+        throw new Error('中国天气网需配置反向代理（js/weather.js 中 CONFIG.proxy）');
       }
       const id = this.resolveId(target);
       if (!id) throw new Error('未匹配到中国天气网城市ID，请直接输入城市名（如 北京）');
 
-      const base = CONFIG.cn_proxy.replace(/\/?$/, '/');
+      const base = CONFIG.proxy.replace(/\/?$/, '/');
 
       const skText = await fetchText(base + 'http://www.weather.com.cn/data/sk/' + id + '.html');
       let sk;
@@ -323,34 +385,104 @@
     }
   };
 
-  /* ===================== 数据源 3：weatherdt 官方插件 ===================== */
+  /* ===================== 数据源 3：气象数据平台 weatherdt =====================
+   * 逆向自官方接口文档：
+   *   GET {api}/common/?area={站号}&type=observe|forecast&key={密钥}
+   *   observe  -> { "<站号>": { "1001002": {002温度,003风力,004风向,005湿度,006降水,007气压,000时间} } }
+   *   forecast -> { "24h": { "<站号>": { "1001001": [ {001白天天气,002夜间天气,003白天温度,004夜间温度,005白天风力,007白天风向,006夜间风力,008夜间风向}, ... ], "000":更新时间 } } }
+   * key 绑定来源 IP/域名；接口无 CORS 头，浏览器需经 CONFIG.proxy 反向代理。 */
   const weatherdt = {
     id: 'weatherdt',
-    label: 'weatherdt 插件',
+    label: '气象数据平台',
 
-    search(q) { return openMeteo.search(q); },
+    search(q) { return cnWeather.search(q); },
     reverse(lat, lon) { return openMeteo.reverse(lat, lon); },
 
+    resolveId(target) {
+      if (target.cnId) return target.cnId;
+      return matchCnId(target.name);
+    },
+
+    buildUrl(id) {
+      const api = CONFIG.weatherdt.api.replace(/\/+$/, '');
+      const base = CONFIG.proxy ? CONFIG.proxy.replace(/\/?$/, '/') : '';
+      return base + api + '/common/?area=' + id
+        + '&type=observe%7Cforecast&key=' + encodeURIComponent(CONFIG.weatherdt.key);
+    },
+
     async fetch(target) {
-      const plugin = global.weatherdt || global.WD || global.WeatherDT;
-      if (!plugin) {
-        throw new Error('未检测到 weatherdt 官方插件：请在页面引入插件脚本，或在 js/weather.js 中配置 CONFIG.weatherdt');
+      if (!CONFIG.weatherdt.key) {
+        throw new Error('气象数据平台未配置 key：请在 js/weather.js 的 CONFIG.weatherdt.key 填写密钥');
       }
-      if (!CONFIG.weatherdt.appid) {
-        throw new Error('weatherdt 未配置 appid：请填写 CONFIG.weatherdt.appid');
-      }
-      if (typeof plugin.getData === 'function') {
-        return await plugin.getData({
-          appid: CONFIG.weatherdt.appid,
-          token: CONFIG.weatherdt.token,
-          lon: target.lon,
-          lat: target.lat,
-          city: target.name
-        });
-      }
-      throw new Error('weatherdt 插件缺少 getData 方法，请按其接入文档对接');
+      const id = this.resolveId(target);
+      if (!id) throw new Error('未匹配到气象数据平台站号，请直接输入城市名（如 北京）');
+
+      const raw = await fetchText(this.buildUrl(id));
+      const text = String(raw).trim();
+
+      const codeErr = /^CC\d+$/.exec(text);
+      if (codeErr) throw new Error(WDT_ERROR[codeErr[0]] || ('接口错误 ' + codeErr[0]));
+
+      let data;
+      try { data = JSON.parse(text); }
+      catch (e) { throw new Error('气象数据平台返回非 JSON 数据：' + text.slice(0, 60)); }
+
+      return parseWeatherdt(data, id, target);
     }
   };
+
+  function parseWeatherdt(data, id, target) {
+    /* 实况 observe：站号下第一个数据大类对象 */
+    let ob = null;
+    const obRoot = data.observe && data.observe[id];
+    if (obRoot) ob = obRoot[Object.keys(obRoot)[0]] || null;
+
+    /* 预报 forecast / 24h：站号下第一个数组即逐日数据 */
+    const fcRoot = data.forecast && data.forecast['24h'] && data.forecast['24h'][id];
+    const fcKey = fcRoot ? Object.keys(fcRoot).find(k => Array.isArray(fcRoot[k])) : null;
+    const fcArr = fcKey ? fcRoot[fcKey] : [];
+
+    const dayLabels = ['今天', '明天', '后天'];
+    const daily = fcArr.slice(0, 3).map((it, i) => {
+      const w = wdtWeather(it['001']);
+      return {
+        label: dayLabels[i] || ('第' + (i + 1) + '天'),
+        date: '',
+        code: String(it['001'] || ''),
+        desc: w.desc,
+        icon: w.icon,
+        max: it['003'] != null ? parseInt(it['003'], 10) : null,
+        min: it['004'] != null ? parseInt(it['004'], 10) : null,
+        precipProb: null,
+        windMax: wdtWindForce(it['005'])
+      };
+    });
+
+    const now = daily[0] || { desc: '', icon: '⛅' };
+    const temp = ob && ob['002'] != null ? parseInt(ob['002'], 10) : now.max;
+    const hour = new Date().getHours();
+
+    return {
+      city: target.name || '',
+      provider: '气象数据平台',
+      updatedAt: (ob && ob['000']) || (fcRoot && fcRoot['000']) || '--:--',
+      current: {
+        temp: temp,
+        feelsLike: null,
+        humidity: ob && ob['005'] != null ? parseInt(ob['005'], 10) : null,
+        windSpeed: ob ? wdtWindForce(ob['003']) : null,
+        windDir: ob ? wdtWindDir(ob['004']) : '--',
+        pressure: ob && ob['007'] != null ? parseInt(ob['007'], 10) : null,
+        precip: ob && ob['006'] != null ? parseFloat(ob['006']) : null,
+        desc: now.desc || '',
+        icon: now.icon || '⛅',
+        isDay: (hour >= 6 && hour < 19) ? 1 : 0
+      },
+      hourly: [],
+      daily: daily,
+      sun: { sunrise: '--:--', sunset: '--:--' }
+    };
+  }
 
   /* ===================== 统一出口 ===================== */
   const PROVIDERS = { 'open-meteo': openMeteo, cnweather: cnWeather, weatherdt: weatherdt };
@@ -365,6 +497,11 @@
     codeInfo: codeInfo,
     windDirText: windDirText,
     cnIcon: cnIcon,
+    matchCnId: matchCnId,
+    wdtWeather: wdtWeather,
+    wdtWindDir: wdtWindDir,
+    wdtWindForce: wdtWindForce,
+    parseWeatherdt: parseWeatherdt,
     getWeather(providerId, target) { return pick(providerId).fetch(target); },
     searchCity(providerId, keyword) { return pick(providerId).search(keyword); },
     reverseGeocode(providerId, lat, lon) { return pick(providerId).reverse(lat, lon); }

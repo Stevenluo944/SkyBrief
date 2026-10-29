@@ -11,7 +11,7 @@
 - **城市搜索**：输入城市名即时联想（支持中文）
 - **自动定位**：浏览器 Geolocation 定位并反查城市名
 - **主题切换**：深色赛博朋克霓虹风 / 浅色清爽风，选择记忆到 localStorage
-- **多数据源可切换**：Open-Meteo（默认，免密钥）、中国天气网、weatherdt 气象数据平台插件
+- **多数据源可切换**：Open-Meteo（默认，免密钥）、中国天气网、气象数据平台（weatherdt）接口
 
 ## 目录结构
 
@@ -21,7 +21,7 @@ SkyBrief/
 ├── css/style.css       # 样式（深色霓虹 + 浅色清爽 双主题）
 ├── js/weather.js       # 数据适配层（三个数据源，统一内部数据模型）
 ├── js/app.js           # 交互与渲染（搜索 / 定位 / Canvas 折线图 / 主题）
-├── tools/cn-proxy.mjs  # 中国天气网反向代理（Node ESM）
+├── tools/weather-proxy.mjs  # 天气数据通用反向代理（Node ESM，中国天气网 + 气象数据平台）
 └── README.md
 ```
 
@@ -46,39 +46,56 @@ python -m http.server 8080
 | 数据源 | 说明 | 是否需要额外配置 |
 | --- | --- | --- |
 | `open-meteo` | 默认方案，免密钥、支持 CORS，全球覆盖 | 否 |
-| `cnweather` | 中国天气网（weather.com.cn） | **是**，需启动反向代理 |
-| `weatherdt` | 气象数据平台（weatherdt.com）官方插件 | **是**，需引入插件脚本并配置 appid |
+| `cnweather` | 中国天气网（weather.com.cn） | **是**，需反向代理（补 Referer） |
+| `weatherdt` | 气象数据平台（weatherdt.com）接口 | **是**，需反向代理 + 平台密钥 key |
 
 当所选数据源不可用时，页面会给出中文提示并**自动回退**到 Open-Meteo，保证始终能渲染真实数据。
 
-### 启用中国天气网数据源
+### 启动反向代理
 
-天气网接口带 `Referer` 校验且不返回 CORS 头，纯静态页面直接抓取会 403/跨域失败，
-因此内置一个轻量反向代理：
+中国天气网接口带 `Referer` 校验、气象数据平台接口不返回 CORS 头，
+纯静态页面浏览器直连都会失败，因此内置一个通用反向代理
+（同时放行 `www.weather.com.cn` 与 `api.weatherdt.com`）：
 
 ```bash
-node tools/cn-proxy.mjs      # 默认监听 http://localhost:8787/
+node tools/weather-proxy.mjs      # 默认监听 http://localhost:8787/
 ```
 
 随后把 `js/weather.js` 中的配置改为：
 
 ```js
-CONFIG.cn_proxy = 'http://localhost:8787/';
+CONFIG.proxy = 'http://localhost:8787/';
 ```
 
-即可在页面下拉框中选择“中国天气网”。代理会把请求转发到 `www.weather.com.cn` 并自动补上 `Referer`。
+### 启用中国天气网数据源
 
-### 启用 weatherdt 数据源
+配置好上面的 `CONFIG.proxy` 后，直接在下拉框选择“中国天气网”即可。
+代理会把请求转发到 `www.weather.com.cn` 并自动补上 `Referer` 头。
 
-1. 按气象数据平台官方文档引入其插件脚本（会暴露全局对象，例如 `window.weatherdt`）。
-2. 在 `js/weather.js` 中填写：
+### 启用气象数据平台（weatherdt）
+
+数据源已按平台官方接口文档**逆向实现**，无需引入任何插件脚本：
+
+```
+GET http://api.weatherdt.com/common/?area={站号}&type=observe|forecast&key={密钥}
+```
+
+- `area`：站号（与城市对应，如北京 `101010100`），本项目复用内置城市表自动匹配
+- `type`：`observe` 实况、`forecast` 预报（默认逐 24 小时）、`index` 指数、`air` 空气质量、`alarm` 预警
+- `key`：在用户中心【订单管理 → 我的订单 → 接口详情】获取，**通常绑定请求来源 IP 或域名**
+
+配置方式：
 
 ```js
-CONFIG.weatherdt.appid = '你的 appid';
-CONFIG.weatherdt.token = '你的 token';
+CONFIG.proxy = 'http://localhost:8787/';   // 平台接口无 CORS 头，必须经代理
+CONFIG.weatherdt.key = '你的密钥 key';
 ```
 
-若未检测到插件或未配置 appid，页面会提示并自动回退。
+已支持的字段映射：实况（温度/湿度/风向/风力/气压/降水）+ 逐日预报（白天与夜间温度、天气现象编码转中文与图标）；
+天气现象编码、风向编号、风力编号均按官方编码表解析，接口错误码（如 `CC1105` 密钥未授权）会转成中文提示。
+
+> 平台数据源默认不含逐小时序列（需在订单中定制 `1h` 类型），此时 24 小时折线图会提示暂不支持，
+> 其余实况与 3 天预报正常展示；未配置 key 或请求失败时自动回退 Open-Meteo。
 
 ## 主题
 
